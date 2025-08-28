@@ -3,6 +3,7 @@ import requests
 from datetime import datetime
 import pandas as pd
 import argparse
+import matplotlib.pyplot as plt
 
 
 def get_search_url(keyword):
@@ -10,7 +11,7 @@ def get_search_url(keyword):
     return f"https://m.timesjobs.com/mobile/jobs-search-result.html?txtKeywords={keyword}&cboWorkExp1=-1&txtLocation="
 
 
-def fetch_page(url):
+def fetch_page(url): # Need to use Selenium here
     response = requests.get(url)
     response.raise_for_status()
     return BeautifulSoup(response.text, 'lxml')
@@ -92,8 +93,10 @@ def find_jobs(keyword, limit):
         csv_file = f"jobs_{datetime.today().strftime('%Y-%m-%d')}_{keyword}.csv"
         df.to_csv(csv_file, index=False)
         print(f"\nSaved {len(jobs)} jobs to {csv_file}")
+        return df
     else:
         print("No jobs found.")
+        return None
 
 
 if __name__ == '__main__':
@@ -105,10 +108,19 @@ if __name__ == '__main__':
                         default='python', help='Job keyword to search')
     parser.add_argument('--limit', type=int, default=5,
                         help='Number of job listings to fetch')
-
-    # Parse the arguments into a Namespace object
+    parser.add_argument('--scrape', type=bool, default= False,
+                        help='Scrape new jobs from timesjobs if scrape is True or use the ones already scraped if scrape is False')
     args = parser.parse_args()
-    find_jobs(args.keyword, args.limit)
+    if args.scrape == True:
+        jobs_df = find_jobs(args.keyword, args.limit)
+    else:
+        jobs_df = pd.read_csv(
+            f'jobs_{datetime.today().strftime('%Y-%m-%d')}_{args.keyword}.csv')
+    if jobs_df is not None:
+        location_counts = jobs_df['Location'].value_counts()
 
-
-# Use pandas to analyse the data
+        plt.figure(figsize=(8, 8))
+        plt.pie(location_counts, labels=location_counts.index,
+                autopct='%1.1f%%', startangle=140)
+        plt.title(f"Job Distribution by Location")
+        plt.show()
