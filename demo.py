@@ -10,6 +10,9 @@ import matplotlib.ticker as ticker
 import matplotlib.cm as cm  # matplotlib colormap
 import matplotlib.gridspec as gridspec
 from collections import Counter
+from playwright.sync_api import sync_playwright
+import time
+import math
 
 
 def get_search_url(keyword):
@@ -17,26 +20,33 @@ def get_search_url(keyword):
     return f"https://m.timesjobs.com/mobile/jobs-search-result.html?txtKeywords={keyword}&cboWorkExp1=-1&txtLocation="
 
 
-def fetch_page(url):
+def scroll_batch(page, scroll_increment=500, timeout=10):
+    """Scroll incrementally until a new batch of jobs is loaded."""
+    old_job_count = len(page.locator("#jobsListULid li").all())
+    start_time = time.time()
+
+    while True:
+        page.evaluate(f"window.scrollBy(0, {scroll_increment})")
+        time.sleep(0.5)
+
+        new_job_count = len(page.locator("#jobsListULid li").all())
+        if new_job_count > old_job_count:
+            # New jobs loaded
+            break
+        if time.time() - start_time > timeout:
+            # Avoid infinite loop if nothing loads
+            break
+
+
+def fetch_job_page(url):
     response = requests.get(url)
     response.raise_for_status()
     return BeautifulSoup(response.text, 'lxml')
 
 
-def parse_job_links(soup, limit=25):
-    # Extract the links to the job pages from the main page
-    listings = soup.find_all('div', class_='srp-listing', limit=limit)
-    if limit == -1:
-        listings = soup.find_all('div', class_='srp-listing')
-    else:
-        listings = soup.find_all('div', class_='srp-listing', limit=limit)
-    links = [listing.find('a').get('href') for listing in listings]
-    return links
-
-
 def parse_job_details(job_url):
     # Parse the page of a job and extract the useful details
-    soup = fetch_page(job_url)
+    soup = fetch_job_page(job_url)
     outer_infos = soup.find('div', class_=['jd-page', 'ui-page', 'ui-page-theme-a',
                                            'ui-page-header-fixed', 'ui-page-footer-fixed', 'ui-page-active'])
     if not outer_infos:
@@ -77,21 +87,40 @@ def parse_job_details(job_url):
     }
 
 
-def find_jobs(keyword, limit=25):
+def find_jobs(keyword, limit):
     base_url = get_search_url(keyword=keyword)
-    soup = fetch_page(base_url)
-    job_links = parse_job_links(soup, limit)
 
-    jobs = []
-    for link in job_links:
-        try:
-            job = parse_job_details(link)
-            if job:
-                print(
-                    f"Found job: {job['Title']} at {job['Company']} posted on {job['Posted on']}")
-                jobs.append(job)
-        except Exception as e:
-            print(f"Failed to parse job at {link}: {e}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
+        page.goto(base_url)
+
+        # Scroll n times to load n batches
+        # The website loads 25 jobs when we scroll to the end of the page
+        batches_to_load = math.floor(limit / 25)
+        for _ in range(batches_to_load):
+            scroll_batch(page, scroll_increment=500, timeout=10)
+            time.sleep(1)  # wait a little for content to stabilize
+
+        jobs_raw = page.locator(
+            "#jobsListULid li .srp-listing.clearfix a.srp-apply-new.ui-link")
+        job_links = []
+        for i in range(limit):
+            job_links.append(jobs_raw.nth(i).get_attribute('href'))
+
+        jobs = []
+
+        for link in job_links:
+            try:
+                job = parse_job_details(link)
+                if job:
+                    print(
+                        f"Found job: {job['Title']} at {job['Company']} posted on {job['Posted on']}")
+                    jobs.append(job)
+            except Exception as e:
+                print(f"Failed to parse job at {link}: {e}")
+
+        browser.close()
 
     if jobs:
         df = pd.DataFrame(jobs)
@@ -107,9 +136,10 @@ def find_jobs(keyword, limit=25):
 def plot_data(df):
     if jobs_df is not None:
         # Creates both the figure and the axes
-        fig = plt.figure(figsize=(18,10))
-        gs = gridspec.GridSpec(3,1,height_ratios=[1,1,2]) # ax3 is 2x taller
-        
+        fig = plt.figure(figsize=(18, 10))
+        gs = gridspec.GridSpec(3, 1, height_ratios=[
+                               1, 1, 2])  # ax3 is 2x taller
+
         ax1 = fig.add_subplot(gs[0])
         ax2 = fig.add_subplot(gs[1])
         ax3 = fig.add_subplot(gs[2])
@@ -117,7 +147,7 @@ def plot_data(df):
         ax2.set_title("Most popular required skills")
         ax3.set_title("Jobs per company")
         job_locations = df['Location'].value_counts()
-        
+
         cmap = plt.get_cmap('tab20')  # pallete with max distinct colors
         colors = cmap(np.linspace(0, 1, len(job_locations.values)))
 
@@ -125,55 +155,49 @@ def plot_data(df):
         ax1.bar(job_locations.index, job_locations.values, color=colors)
 
         ax1.set_ylabel(f'{args.keyword.capitalize()} jobs')
-        ax1.set_title(f'{args.keyword.capitalize()} jobs by location and number')
-        
-        
-        all_skills = df['Skills'].dropna().str.split(', ') # dropna() ignores empty cells
-        
+        ax1.set_title(
+            f'{args.keyword.capitalize()} jobs by location and number')
+
+        all_skills = df['Skills'].dropna().str.split(
+            ', ')  # dropna() ignores empty cells
+
         # Some skills are duplicated for the same job so we'll remove them using sets
-        
+
         flattened_skills = []
-        
+
         for sublist in all_skills:
             clean_skills = {skill.strip().lower() for skill in sublist}
             flattened_skills.extend(clean_skills)
-        
-        
+
         skill_counts = Counter(flattened_skills)
         skill_series = pd.Series(skill_counts).sort_values(ascending=False)
-        
+
         cmap = plt.get_cmap('winter')
-        colors = cmap(np.linspace(0,1,len(skill_series.head(10))))
-        
-        
-        
+        colors = cmap(np.linspace(0, 1, len(skill_series.head(10))))
+
         ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        ax2.bar(skill_series.index[:10], skill_series.values[:10],color=colors)
-        
+        ax2.bar(skill_series.index[:10],
+                skill_series.values[:10], color=colors)
+
         ax2.set_ylabel('Number of jobs')
         ax2.set_title('Skills')
-        
-       
+
         company_names = df['Company'].value_counts()
         # Series where index -> location names
         #              Values -> number of jobs in each location
         cmap = plt.get_cmap('gnuplot2')  # pallete with max distinct colors
         colors = cmap(np.linspace(0, 1, len(company_names.values)))
-        
-        
 
         ax3.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        ax3.barh(company_names.index[:10], company_names.values[:10], color=colors)
-        
+        ax3.barh(company_names.index[:10],
+                 company_names.values[:10], color=colors)
 
         ax3.set_ylabel(f'Companies')
         ax3.set_title(f'Jobs per company')
         ax3.set_yticks(range(len(company_names.index[:10])))
         ax3.set_yticklabels(company_names.index[:10])
-        
-        
-        plt.show()
 
+        plt.show()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()  # Create the parser instance
