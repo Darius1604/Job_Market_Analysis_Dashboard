@@ -5,14 +5,12 @@ import pandas as pd
 import numpy as np
 import argparse
 import os
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import matplotlib.cm as cm  # matplotlib colormap
-import matplotlib.gridspec as gridspec
 from collections import Counter
 from playwright.sync_api import sync_playwright
 import time
 import math
+import streamlit as st
+import altair as alt
 
 
 def get_search_url(keyword):
@@ -75,7 +73,8 @@ def parse_job_details(job_url):
     # Key Skills
     key_skill_links = inner_infos.find('div', id='JobDetails').find(
         'div', id='KeySkills').find_all('a')
-    key_skills = [key_skill_link.text for key_skill_link in key_skill_links]
+    key_skills = [key_skill_link.text.lower()
+                  for key_skill_link in key_skill_links]
     key_skills = ', '.join(key_skills)
     return {
         'Title': job_title,
@@ -132,72 +131,74 @@ def find_jobs(keyword, limit):
         print("No jobs found.")
         return None
 
+def launch_streamlit(keyword, df):
+    st.title(f'{keyword.capitalize()} listings')
+    st.dataframe(df)
 
-def plot_data(df):
-    if jobs_df is not None:
-        # Creates both the figure and the axes
-        fig = plt.figure(figsize=(18, 10))
-        gs = gridspec.GridSpec(3, 1, height_ratios=[
-                               1, 1, 2])  # ax3 is 2x taller
+    top_cities = (
+        df['Location']
+        .value_counts()
+        .reset_index()  # reset_index() converts the index into a column and makes the counts another column
+        .sort_values(by='count', ascending=False)
+        .head(10)
+    )
+    st.subheader('_Locations with the most job listings_')
+    top_cities = top_cities.rename(columns={'count': 'Number of jobs'})
+    chart = alt.Chart(top_cities).mark_bar().encode(
+        x='Number of jobs:Q',  # Q -> Quantitative, N -> Nominal
+        y=alt.Y('Location:N', sort='-x'),
+        # categories on y-axis, sorted by count
+        color=alt.Color('Number of jobs:Q',
+                        scale=alt.Scale(scheme='bluepurple'))
+    ).properties(height=500)
+    st.altair_chart(chart, use_container_width=True)
+    st.markdown('##### The cities with the most job listings are: ' +
+                ', '.join(top_cities['Location'].head(3).tolist()))
+    st.divider()
 
-        ax1 = fig.add_subplot(gs[0])
-        ax2 = fig.add_subplot(gs[1])
-        ax3 = fig.add_subplot(gs[2])
-        ax1.set_title("Jobs per location")
-        ax2.set_title("Most popular required skills")
-        ax3.set_title("Jobs per company")
-        job_locations = df['Location'].value_counts()
+    st.subheader('_Top companies_')
+    top_companies = (
+        df['Company']
+        .value_counts()
+        .reset_index()  
+        .sort_values(by='count', ascending=False)
+        .head(10)
+    )
+    top_companies = top_companies.rename(columns={'count': 'Number of jobs'})
+    chart2 = alt.Chart(top_companies).mark_bar().encode(
+        x='Number of jobs:Q',
+        y=alt.Y('Company:N', sort='-x'),
+        color=alt.Color('Number of jobs:Q', scale=alt.Scale(scheme='greens'))
+    ).properties(height=500)
+    st.altair_chart(chart2, use_container_width=True)
+    st.markdown('##### The companies with the most job listings are: ' +
+                ', '.join(top_companies['Company'].head(3).tolist()))
+    st.divider()
 
-        cmap = plt.get_cmap('tab20')  # pallete with max distinct colors
-        colors = cmap(np.linspace(0, 1, len(job_locations.values)))
+    st.subheader('_Top Skills_')
+    all_skills = df['Skills'].dropna().str.split(', ')  # dropna() ignores empty cells
+    # Some skills are duplicated for the same job so we'll remove them using sets
+    flattened_skills = []
+    for sublist in all_skills:
+        clean_skills = {skill.strip().lower() for skill in sublist}
+        flattened_skills.extend(clean_skills)
 
-        ax1.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        ax1.bar(job_locations.index, job_locations.values, color=colors)
+    skill_counts = Counter(flattened_skills)
+    df_skills = pd.DataFrame(skill_counts.items(), columns=[
+                             'Skill', 'Number of jobs'])
+    top_skills = (df_skills
+                  .sort_values(by='Number of jobs', ascending=False)
+                  .head(10))
+    chart3 = alt.Chart(top_skills).mark_bar().encode(
+        x='Number of jobs:Q',
+        y=alt.Y('Skill:N', sort='-x'),
+        color=alt.Color('Number of jobs:Q', scale=alt.Scale(scheme='cividis'))).properties(height=500)
 
-        ax1.set_ylabel(f'{args.keyword.capitalize()} jobs')
-        ax1.set_title(
-            f'{args.keyword.capitalize()} jobs by location and number')
+    st.altair_chart(chart3, use_container_width=True)
+    st.markdown('##### The most important skills are: ' +
+                ', '.join(top_skills['Skill'].head(3).tolist()))
+    st.divider()
 
-        all_skills = df['Skills'].dropna().str.split(
-            ', ')  # dropna() ignores empty cells
-
-        # Some skills are duplicated for the same job so we'll remove them using sets
-
-        flattened_skills = []
-
-        for sublist in all_skills:
-            clean_skills = {skill.strip().lower() for skill in sublist}
-            flattened_skills.extend(clean_skills)
-
-        skill_counts = Counter(flattened_skills)
-        skill_series = pd.Series(skill_counts).sort_values(ascending=False)
-
-        cmap = plt.get_cmap('winter')
-        colors = cmap(np.linspace(0, 1, len(skill_series.head(10))))
-
-        ax2.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        ax2.bar(skill_series.index[:10],
-                skill_series.values[:10], color=colors)
-
-        ax2.set_ylabel('Number of jobs')
-        ax2.set_title('Skills')
-
-        company_names = df['Company'].value_counts()
-        # Series where index -> location names
-        #              Values -> number of jobs in each location
-        cmap = plt.get_cmap('gnuplot2')  # pallete with max distinct colors
-        colors = cmap(np.linspace(0, 1, len(company_names.values)))
-
-        ax3.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-        ax3.barh(company_names.index[:10],
-                 company_names.values[:10], color=colors)
-
-        ax3.set_ylabel(f'Companies')
-        ax3.set_title(f'Jobs per company')
-        ax3.set_yticks(range(len(company_names.index[:10])))
-        ax3.set_yticklabels(company_names.index[:10])
-
-        plt.show()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()  # Create the parser instance
@@ -217,4 +218,4 @@ if __name__ == '__main__':
         jobs_df = pd.read_csv(
             f'jobs_{datetime.today().strftime('%Y-%m-%d')}_{args.keyword}.csv')
     if jobs_df is not None:
-        plot_data(df=jobs_df)
+        launch_streamlit(args.keyword, jobs_df)
