@@ -7,6 +7,10 @@ import time
 import math
 import sys
 from pathlib import Path
+import random
+import asyncio
+import httpx
+
 
 def build_search_url(keyword):
     keyword = keyword.replace(" ", '+')
@@ -20,7 +24,7 @@ def load_next_batch(page, scroll_increment=500, timeout=10):
 
     while True:
         page.evaluate(f"window.scrollBy(0, {scroll_increment})")
-        time.sleep(0.2)
+        time.sleep(random.uniform(0.1, 0.3))
 
         new_job_count = len(page.locator("#jobsListULid li").all())
         if new_job_count > old_job_count:
@@ -37,50 +41,74 @@ def fetch_job_html(url):
     return BeautifulSoup(response.text, 'lxml')
 
 
-def parse_job_posting(job_url):
-    # Parse the page of a job and extract the useful details
-    soup = fetch_job_html(job_url)
-    outer_container = soup.find('div', class_=['jd-page', 'ui-page', 'ui-page-theme-a',
-                                           'ui-page-header-fixed', 'ui-page-footer-fixed', 'ui-page-active'])
-    if not outer_container:
-        return None
+async def fetch_job_async(client, url):
+    try:
+        r = await client.get(url)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, 'lxml')
+        outer_container = soup.find('div', class_=['jd-page', 'ui-page', 'ui-page-theme-a',
+                                                   'ui-page-header-fixed', 'ui-page-footer-fixed', 'ui-page-active'])
+        if not outer_container:
+            return None
 
-    inner_container = outer_container.find('div', class_='jdpage-main')
+        inner_container = outer_container.find('div', class_='jdpage-main')
 
-    # Job info: title, company and the positing date
-    job_information = inner_container.find('div', id='jobTitle')
-    job_title = job_information.h1.text.strip()
-    company_name = job_information.h2.span.text.strip()
-    posting_time = job_information.find(
-        'span', class_='posting-time').text.strip()
-    posting_time_date = datetime.strptime(posting_time, '%d %b, %Y').date()
+        # Job info: title, company and the positing date
+        job_information = inner_container.find('div', id='jobTitle')
+        job_title = job_information.h1.text.strip()
+        company_name = job_information.h2.span.text.strip()
+        posting_time = job_information.find(
+            'span', class_='posting-time').text.strip()
+        posting_time_date = datetime.strptime(posting_time, '%d %b, %Y').date()
 
-    # Location and experience
-    location_exp_infos = inner_container.find('div', class_='clearfix exp-loc')
-    location_text = location_exp_infos.find(
-        'div', class_='srp-loc jd-loc').text.strip()
-    location_list = location_text.split()
-    location = location_list[1].translate(str.maketrans('', '', '()/,'))
-    years_of_experience = location_exp_infos.find(
-        'div', class_='srp-exp').text.split()
-    years_of_experience = years_of_experience[0] + ' ' + years_of_experience[1]
+        # Location and experience
+        location_exp_infos = inner_container.find(
+            'div', class_='clearfix exp-loc')
+        location_text = location_exp_infos.find(
+            'div', class_='srp-loc jd-loc').text.strip()
+        location_list = location_text.split()
+        location = location_list[1].translate(str.maketrans('', '', '()/,'))
+        years_of_experience = location_exp_infos.find(
+            'div', class_='srp-exp').text.split()
+        years_of_experience = years_of_experience[0] + \
+            ' ' + years_of_experience[1]
 
     # Key Skills
-    key_skill_links = inner_container.find('div', id='JobDetails').find(
-        'div', id='KeySkills').find_all('a')
-    key_skills = [key_skill_link.text.lower()
-                  for key_skill_link in key_skill_links]
-    key_skills = ', '.join(key_skills)
-    return {
-        'Title': job_title,
-        'Company': company_name,
-        'Posted on': str(posting_time_date),
-        'Location': location,
-        'Experience': years_of_experience,
-        'Skills': key_skills
-    }
+        key_skill_links = inner_container.find('div', id='JobDetails').find(
+            'div', id='KeySkills').find_all('a')
+        key_skills = [key_skill_link.text.lower()
+                      for key_skill_link in key_skill_links]
+        key_skills = ', '.join(key_skills)
+        return {
+            'Title': job_title,
+            'Company': company_name,
+            'Posted on': str(posting_time_date),
+            'Location': location,
+            'Experience': years_of_experience,
+            'Skills': key_skills
+        }
+    except Exception as e:
+        print(f"Failed fetching {url}: {e}")
+        return None
+
+
+async def fetch_all_jobs(job_links):
+    jobs = []
+    tasks = []
+    limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+    async with httpx.AsyncClient(limits=limits,timeout=30) as client:
+        tasks = [fetch_job_async(client, url) for url in job_links]
+        for future in asyncio.as_completed(tasks):
+            result = await future
+            if result:
+                jobs.append(result)
+       
+    return jobs
+
 
 JOBS_PER_SCROLL = 25
+
+
 def scrape_jobs(keyword, limit):
     base_url = build_search_url(keyword=keyword)
 
@@ -94,7 +122,7 @@ def scrape_jobs(keyword, limit):
         batches_to_load = math.floor(limit / JOBS_PER_SCROLL)
         for _ in range(batches_to_load):
             load_next_batch(page, scroll_increment=500, timeout=10)
-            time.sleep(0.3)  # wait a little for content to stabilize
+            time.sleep(random.uniform(0.1,0.3)) # wait a little for content to stabilize
 
         jobs_raw = page.locator(
             "#jobsListULid li .srp-listing.clearfix a.srp-apply-new.ui-link")
@@ -102,24 +130,12 @@ def scrape_jobs(keyword, limit):
         for i in range(limit):
             job_links.append(jobs_raw.nth(i).get_attribute('href'))
 
-        jobs = []
-
-        for link in job_links:
-            try:
-                job = parse_job_posting(link)
-                if job:
-                    print(
-                        f"Found job: {job['Title']} at {job['Company']} posted on {job['Posted on']}")
-                    jobs.append(job)
-            except Exception as e:
-                print(f"Failed to parse job at {link}: {e}")
-
         browser.close()
-
+    jobs = asyncio.run(fetch_all_jobs(job_links))
     if jobs:
         df = pd.DataFrame(jobs)
         Path("csv_files").mkdir(parents=True, exist_ok=True)
-        
+
         csv_file = f"csv_files/jobs_{datetime.today().strftime('%Y-%m-%d')}_{keyword}_{limit}.csv"
         df.to_csv(csv_file, index=False)
         print(f"\nSaved {len(jobs)} jobs to {csv_file}")

@@ -31,7 +31,9 @@ def make_bar_chart(df, x, y, color_scheme, title):
 
 def render_dashboard(keyword, df):
     st.title(f'{keyword.capitalize()} listings')
-    st.dataframe(df)
+    df_sorted = df.sort_values(by='Posted on', ascending=False)
+    df_sorted = df_sorted.reset_index(drop=True)
+    st.dataframe(df_sorted)
 
     top_cities = (
         df['Location']
@@ -86,15 +88,13 @@ def render_dashboard(keyword, df):
 
     st.markdown('#### The most important skills are: ')
     top_3_skills = top_skills['Skill'].head(3).tolist()
-    col1, col2, col3 = st.columns(3)
-    for col, skill in zip([col1, col2, col3], top_3_skills):
-        col.metric(value=skill.capitalize())
-
+    for skill in top_3_skills:
+        st.markdown(f"- {skill.capitalize()}")
 
 if __name__ == '__main__':
     keyword = st.text_input("Job keyword", "Python Developer")
     limit = st.number_input("Number of jobs", min_value=1,
-                            max_value=100, value=20, step=10)
+                            max_value=10000, value=20, step=10)
     found_new_jobs = False
     if st.button('Scrape new jobs'):
         if not os.path.exists(f'csv_files/jobs_{datetime.today().strftime('%Y-%m-%d')}_{keyword}_{limit}.csv'):
@@ -104,14 +104,13 @@ if __name__ == '__main__':
                     text=True,
                     capture_output=True
                 )
-                if 'Found job' in result.stdout:
-                    found_new_jobs = True
-                    st.success('Jobs have been found and written to the CSV file')
+                st.write(result)
+                if not result.returncode:
+                    st.success('Jobs have been successfully written to the CSV file')
                 else:
-                    st.error('No jobs found.')
-        if not found_new_jobs:
-            st.success('Jobs have been found and written to the CSV file')
+                    st.error('No jobs found')
         jobs_df = pd.read_csv(
             f'csv_files/jobs_{datetime.today().strftime('%Y-%m-%d')}_{keyword}_{limit}.csv')
         if jobs_df is not None:
+            st.success('Data visualization is ready')
             render_dashboard(keyword, jobs_df)
