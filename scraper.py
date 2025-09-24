@@ -152,5 +152,5 @@ if __name__ == "__main__":
     # keyword = sys.argv[1]
     # limit = int(sys.argv[2])
 
-    # result_code = scrape_jobs(keyword, limit)
-    
+    result_code = scrape_jobs(keyword, limit)
+    print('GATA SEF')
