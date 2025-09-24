@@ -1,0 +1,22 @@
+{
+    "24-09-2025": {
+        "python": {
+            "scraped": 1000
+        },
+        "java": {
+            "scraped": 1000
+        },
+        "sql": {
+            "scraped": 1000
+        },
+        "AI": {
+            "scraped": 1000
+        },
+        "django": {
+            "scraped": 594
+        },
+        "Spring": {
+            "scraped": 1000
+        }
+    }
+}

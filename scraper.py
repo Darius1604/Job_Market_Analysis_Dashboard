@@ -17,7 +17,7 @@ def build_search_url(keyword):
     return f"https://m.timesjobs.com/mobile/jobs-search-result.html?txtKeywords={keyword}&cboWorkExp1=-1&txtLocation="
 
 
-def load_next_batch(page, scroll_increment=500, timeout=10):
+def load_next_batch(page, scroll_increment=500, timeout=30):
     """Scroll incrementally until a new batch of jobs is loaded."""
     old_job_count = len(page.locator("#jobsListULid li").all())
     start_time = time.time()
@@ -113,7 +113,7 @@ def scrape_jobs(keyword, limit):
     base_url = build_search_url(keyword=keyword)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
         page.goto(base_url)
 
@@ -129,15 +129,18 @@ def scrape_jobs(keyword, limit):
         job_links = []
         for i in range(limit):
             job_links.append(jobs_raw.nth(i).get_attribute('href'))
-
+        print('Saved ',len(job_links),' links')
         browser.close()
     jobs = asyncio.run(fetch_all_jobs(job_links))
     if jobs:
         df = pd.DataFrame(jobs)
+        df_sorted = df.sort_values(by='Posted on', ascending=False)
+        df_sorted = df_sorted.reset_index(drop=True)
+        df_sorted.index = df_sorted.index + 1
         Path("csv_files").mkdir(parents=True, exist_ok=True)
 
         csv_file = f"csv_files/jobs_{datetime.today().strftime('%Y-%m-%d')}_{keyword}_{limit}.csv"
-        df.to_csv(csv_file, index=False)
+        df_sorted.to_csv(csv_file, index=False)
         print(f"\nSaved {len(jobs)} jobs to {csv_file}")
         return 0
     else:
@@ -146,8 +149,8 @@ def scrape_jobs(keyword, limit):
 
 
 if __name__ == "__main__":
-    keyword = sys.argv[1]
-    limit = int(sys.argv[2])
+    # keyword = sys.argv[1]
+    # limit = int(sys.argv[2])
 
-    result_code = scrape_jobs(keyword, limit)
-    print('GATA SEF')
+    # result_code = scrape_jobs(keyword, limit)
+    
