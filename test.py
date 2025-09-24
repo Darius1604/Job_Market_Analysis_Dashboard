@@ -53,7 +53,7 @@ async def fetch_job_async(client, url):
     except Exception as e:
         print(f"Failed fetching {url}: {e}")
         return None
-url = "https://m.timesjobs.com/mobile/job-detail/software-developer-3-oracle-bengaluru-bangalore-6-to-9-yrs-jobid-A7IE0Dt__SLASH__bQlzpSvf__PLUS__uAgZw==&bc=+&sequence=581"  # replace with a real job URL
+url = "https://m.timesjobs.com/mobile/job-detail/manager-reporting-python-power-bi-sql-6-years-gurgaon-job-crescendo-global-gurgaon-6-to-8-yrs-jobid-L1BeTvasnpZzpSvf__PLUS__uAgZw==&bc=+&sequence=705"  # replace with a real job URL
 
 async def main():
     async with httpx.AsyncClient() as client:

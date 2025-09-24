@@ -137,7 +137,6 @@ def run_scraper_and_dashboard(keyword, limit):
                 text=True,
                 capture_output=True
             )
-            st.write(result)
             if not result.returncode:
                 st.success('Jobs have been successfully written to the CSV file')
                 # Remove old file if exists
