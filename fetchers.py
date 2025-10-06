@@ -40,7 +40,7 @@ async def fetch_job_async(client, url):
         years_of_experience = f"{years_of_experience[0]} {years_of_experience[1]}"
 
         key_skill_links = inner_container.find('div', id='JobDetails').find('div', id='KeySkills').find_all('a')
-        key_skills = ', '.join([a.text.lower() for a in key_skill_links])
+        key_skills = [a.text.lower() for a in key_skill_links]
 
         return {
             'Title': job_title,
