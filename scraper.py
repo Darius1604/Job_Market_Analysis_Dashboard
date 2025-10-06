@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 import requests
 from datetime import datetime
+from datetime import date
 import pandas as pd
 from playwright.sync_api import sync_playwright
 import time
@@ -11,6 +12,15 @@ import random
 import asyncio
 import httpx
 import logging
+import threading
+
+def show_timer(stop_event):
+    start_time = time.time()
+    while not stop_event.is_set():
+        elapsed = int(time.time() - start_time)
+        print(f"\rTime elapsed: {elapsed} seconds", end="")
+        time.sleep(1)
+    print("\nDone fetching batch!")
 
 def build_search_url(keyword):
     keyword = keyword.replace(" ", '+')
@@ -19,21 +29,22 @@ def build_search_url(keyword):
 def load_next_batch(page, scroll_increment=500, timeout=30):
     """Scroll incrementally until a new batch of jobs is loaded."""
     old_job_count = len(page.locator("#jobsListULid li").all())
+    new_count = old_job_count + JOBS_PER_SCROLL
+    
+    
     start_time = time.time()
-
     while True:
         page.evaluate(f"window.scrollBy(0, {scroll_increment})")
-        time.sleep(random.uniform(0.1, 0.3))
-
-        new_job_count = len(page.locator("#jobsListULid li").all())
+        time.sleep(random.uniform(0.1,0.3))
+        
+        new_job_count = len(page.locator('#jobsListULid li').all())
         if new_job_count > old_job_count:
             # New jobs loaded
             break
         if time.time() - start_time > timeout:
             # Avoid infinite loop if nothing loads
             break
-
-
+        
 def fetch_job_html(url):
     response = requests.get(url)
     response.raise_for_status()
@@ -82,10 +93,12 @@ async def fetch_job_async(client, url):
         return {
             'Title': job_title,
             'Company': company_name,
-            'Posted on': str(posting_time_date),
+            'Posted on': posting_time_date,
             'Location': location,
             'Experience': years_of_experience,
-            'Skills': key_skills
+            'Skills': key_skills,
+            'Url' : url,
+            'Scrape_date' : date.today()
         }
 
     except Exception as e:
@@ -96,7 +109,7 @@ async def fetch_job_async(client, url):
 async def fetch_all_jobs(job_links):
     jobs = []
     failed_urls = job_links.copy()
-    limits = httpx.Limits(max_connections=50, max_keepalive_connections=20)
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
     async with httpx.AsyncClient(limits=limits, timeout=30) as client:
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -126,6 +139,7 @@ async def fetch_all_jobs(job_links):
 
 
 JOBS_PER_SCROLL = 25
+BATCH_SIZE = 500 # Maximum 500 jobs scraped before pausing
 
 
 def scrape_jobs(keyword, limit):
@@ -140,7 +154,7 @@ def scrape_jobs(keyword, limit):
         # The website loads 25 jobs when we scroll to the end of the page
         batches_to_load = math.floor(limit / JOBS_PER_SCROLL)
         for _ in range(batches_to_load):
-            load_next_batch(page, scroll_increment=500, timeout=10)
+            load_next_batch(page, scroll_increment=500, timeout=30)
             time.sleep(random.uniform(0.1,0.3)) # wait a little for content to stabilize
 
         jobs_raw = page.locator(
@@ -150,7 +164,25 @@ def scrape_jobs(keyword, limit):
             job_links.append(jobs_raw.nth(i).get_attribute('href'))
         print('Saved ',len(job_links),' links')
         browser.close()
-    jobs = asyncio.run(fetch_all_jobs(job_links))
+    
+    # Need to save links and then fetch 500 of them
+    # wait 1-3 minutes and do it again
+    jobs = []
+    for i in range(0,len(job_links), BATCH_SIZE):
+        batch= job_links[i:i+BATCH_SIZE]
+        print(f"Batch {math.ceil(i/BATCH_SIZE)} has {len(batch)} jobs")
+        if i != 0:
+            wait_time = random.uniform(120, 180)
+            print(f"Waiting for {wait_time:.0f} seconds before continuing... (scraper is idle, not blocked)")
+            time.sleep(wait_time)
+        print(f"Started to fetch the jobs from batch number {math.ceil(i/BATCH_SIZE) + 1}")
+        stop_event = threading.Event()
+        timer_thread = threading.Thread(target=show_timer,args=(stop_event,)) # comma makes it a tuple
+        timer_thread.start()
+        jobs.extend(asyncio.run(fetch_all_jobs(batch)))
+        stop_event.set()
+        timer_thread.join()
+    
     if jobs:
         df = pd.DataFrame(jobs)
         df_sorted = df.sort_values(by='Posted on', ascending=False)
@@ -165,12 +197,15 @@ def scrape_jobs(keyword, limit):
     else:
         print("No jobs found.")
         return 1
+        
 
 
 if __name__ == "__main__":
-    keyword = sys.argv[1]
-    limit = int(sys.argv[2])
+    # keyword = sys.argv[1]
+    # limit = int(sys.argv[2])
 
-    result_code = scrape_jobs(keyword, limit)
+    # result_code = scrape_jobs(keyword, limit)
+    
+    scrape_jobs('python',1000)
    
     
