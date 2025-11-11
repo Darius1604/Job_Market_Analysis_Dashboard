@@ -26,6 +26,8 @@ async def fetch_job_async(client, url):
             raise ValueError("Outer container not found")
 
         inner_container = outer_container.find('div', class_='jdpage-main')
+        if inner_container.find('div', class_='notify-msg'):
+            return None
         job_information = inner_container.find('div', id='jobTitle')
         job_title = job_information.h1.text.strip()
         company_name = job_information.h2.span.text.strip()
@@ -38,9 +40,18 @@ async def fetch_job_async(client, url):
         location = location_list[1].translate(str.maketrans('', '', '()/,'))
         years_of_experience = location_exp_infos.find('div', class_='srp-exp').text.split()
         years_of_experience = f"{years_of_experience[0]} {years_of_experience[1]}"
+        
+        job_details = inner_container.find('div', id='JobDetails')
+        if job_details:
+            key_skills_div = job_details.find('div', id='KeySkills')
+            if key_skills_div:
+                key_skill_links = key_skills_div.find_all('a')
+                key_skills = [a.text.lower().strip() for a in key_skill_links]
+            else:
+                key_skills = []
+        else:
+            key_skills = []
 
-        key_skill_links = inner_container.find('div', id='JobDetails').find('div', id='KeySkills').find_all('a')
-        key_skills = [a.text.lower() for a in key_skill_links]
 
         return {
             'Title': job_title,
