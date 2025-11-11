@@ -1,57 +1,35 @@
-import mysql.connector
+from config.config import config
+import psycopg2
+def connect():
+    """ Connect to the PostgreSQL database server"""
+    conn = None
+    try:
+        # Read connection parameters
+        params = config()
+        
+        # Connect to the PostgreSQL server
+        print('Connecting to the PostgreSQL database...')
+        conn = psycopg2.connect(**params)
+        
+        # create a cursor
+        cursor = conn.cursor()
+    
+        # execute a statement
+        print('PostgreSQL database version:')
+        cursor.execute('SELECT version()')
+        
+        # display the PostgreSQL database server version
+        db_version = cursor.fetchone()
+        print(db_version)
+        
+        # Close the communication with the PostgreSQL
+        cursor.close()
+    except(Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            print('Database connection closed')
 
-conn = mysql.connector.connect(
-    host='localhost',
-    user='root',
-    password='mysqlpassword97',
-    database='jobsdb'
-)
-
-cursor = conn.cursor()
-
-try:
-    cursor.execute("""CREATE TABLE IF NOT EXISTS jobs(
-    id int AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255),
-    company VARCHAR(255),
-    posted_on DATE,
-    location VARCHAR(255),
-    experience VARCHAR(50),
-    url VARCHAR(500) UNIQUE,
-    scrape_date DATE,
-    source_keyword VARCHAR(100));
-    """)
-except mysql.connector.Error as e:
-    print(f"Error creating jobs table: {e}")
-try:
-    cursor.execute("""
-                CREATE TABLE IF NOT EXISTS skills(
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) UNIQUE
-    );
-    """)
-
-except mysql.connector.Error as e:
-    print(f"Error creating skills table: {e}")
-try:
-    cursor.execute("""
-                 CREATE TABLE IF NOT EXISTS job_skills(
-    job_id INT,
-    skill_id INT,
-    PRIMARY KEY (job_id, skill_id),
-    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
-    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
-    );"""
-                     )
-except mysql.connector.Error as e:
-    print(f"Error creating job_skills table: {e}")
-
-cursor.execute('SHOW TABLES;')
-
-for table in cursor.fetchall():
-    print(table)
-
-cursor.close()
-conn.close()
-
-
+if __name__ == '__main__':
+    connect()
